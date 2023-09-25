@@ -8,38 +8,37 @@ namespace CT_Font_Helper
 
     class Program
     {
-		static void Decrypt(string src, string dst, string key)
+		static void Decrypt(string inFile, string outFile, string key)
         {
 
-			FileStream file = File.Open(src, FileMode.Open);
+			FileStream file = File.Open(inFile, FileMode.Open);
 			BinaryReader reader = new BinaryReader(file);
 
 			int size = (int)(file.Length / 4);
-			int sizeNoHeader = size - 2;
 
-			//List<uint> keyData = new List<uint>(1042);
-			List<uint> dataNoHeader = new List<uint>(sizeNoHeader);
+			List<uint> data = new List<uint>(size-2);
 
-			//ulong header = BitConverter.ToUInt64(BitConverter.GetBytes(reader.ReadUInt64()).Reverse().ToArray(), 0);
-			ulong header = BitConverter.ToUInt64(reader.ReadBytes(8).Reverse().ToArray(), 0);
-			while (dataNoHeader.Count != sizeNoHeader)
+			ulong header = reader.ReadUInt64();
+
+            while (data.Count != size-2)
 			{
-				uint tmp = (uint)(reader.ReadByte() << 24 | reader.ReadByte() << 16 | reader.ReadByte() << 8 | reader.ReadByte());
-				dataNoHeader.Add(tmp);// reader.ReadInt32());
-			}
+                uint tmp = (uint)(reader.ReadByte() << 24 | reader.ReadByte() << 16 | reader.ReadByte() << 8 | reader.ReadByte());
+                data.Add(tmp);
+            }
 			reader.Close();
 
-			Decryptor d = new Decryptor(key);
+			Cryptor cryptor = new Cryptor(key);
 
 			var watch = new System.Diagnostics.Stopwatch();
 			Console.WriteLine($"Decrypting. This may take a while.");
+
 			watch.Start();
-			uint[] tmpArray = d.Decrypt(header, dataNoHeader);
+			uint[] tmpArray = cryptor.Decrypt(header, data);
 			watch.Stop();
 
 			Console.WriteLine($"Decrypted. Time Elapsed: {watch.Elapsed}");
 
-			using (var fileOut = File.OpenWrite(dst))
+			using (var fileOut = File.OpenWrite(outFile))
 			{
 				var writer = new BinaryWriter(fileOut);
 				foreach (uint i in tmpArray)
@@ -49,46 +48,64 @@ namespace CT_Font_Helper
 				}
 			}
 
-
 			Console.WriteLine("Success. Press any key to exit.");
 			Console.ReadKey();
 		}
 
-		static void Encrypt(string src, string dst, string key)
+		static void Encrypt(string inFile, string outFile, string key)
         {
-			FileStream file = File.OpenRead(src);
+			FileStream file = File.OpenRead(inFile);
 			BinaryReader br = new BinaryReader(file);
 
 			int size = (int)(file.Length / 4);
-			int sizeNoHeader = size - 2;
+			int sizeRemainder = (int)(file.Length % 8);
 
-			//List<uint> keyData = new List<uint>(1042);
-			List<uint> dataNoHeader = new List<uint>(sizeNoHeader);
+			List<uint> data = new List<uint>(size);
 
-			
-			ulong header = BitConverter.ToUInt64(br.ReadBytes(8).Reverse().ToArray(), 0);
-
-			while (dataNoHeader.Count != sizeNoHeader)
+			while (data.Count != size)
 			{
 				uint tmp = (uint)(br.ReadByte() << 24 | br.ReadByte() << 16 | br.ReadByte() << 8 | br.ReadByte());
-				dataNoHeader.Add(tmp);
+				data.Add(tmp);
 			}
+
+			if (sizeRemainder != 0)
+			{
+				List<byte> remainingBytes = new List<byte>(8);
+
+				remainingBytes = br.ReadBytes((int)(file.Length - br.BaseStream.Position)).Reverse().ToList();
+
+				for (int i = 0; remainingBytes.Count < 8; i++)
+				{
+					remainingBytes.Add(0);
+				}
+						
+				data.Add(BitConverter.ToUInt32(remainingBytes.ToArray(), 0));
+
+				if (sizeRemainder > 4)
+					data.Add(BitConverter.ToUInt32(remainingBytes.ToArray(), 4));
+            }
+
 			br.Close();
 
-			Decryptor d = new Decryptor(key);
+			Cryptor d = new Cryptor(key);
 			var watch = new System.Diagnostics.Stopwatch();
 			Console.WriteLine($"Encrypting. This may take a while.");
 			watch.Start();
-			uint[] tmpArray = d.Encrypt(header, dataNoHeader);
+			uint[] tmpArray = d.Encrypt(data);
 			watch.Stop();
 
 			Console.WriteLine($"Encrypted. Time Elapsed: {watch.Elapsed}");
 			Console.WriteLine($"Writing file.");
 
-			using (var fileOut = File.OpenWrite(dst))
+			using (var fileOut = File.OpenWrite(outFile))
 			{
 				var writer = new BinaryWriter(fileOut);
-				foreach (uint i in tmpArray)
+
+				// Write header used for decryption (0x00000000, 0x00000000)
+				writer.Write(0); 
+				writer.Write(0);
+
+                foreach (uint i in tmpArray)
 				{
 					// Swap endian before writing
 					writer.Write(BitConverter.ToUInt32(BitConverter.GetBytes(i).Reverse().ToArray(), 0));
@@ -105,12 +122,11 @@ namespace CT_Font_Helper
 			string keyPath;
 			string destPath;
 			ConsoleKeyInfo action;
-
 #if DEBUG
-			srcPath = @"testIn.bin";
+			srcPath = @"in.bin";
 			keyPath = @"key.bin";
-			destPath = "testOut.bin";
-			action = "E";
+			destPath = "out.bin";
+			action = new ConsoleKeyInfo('E', ConsoleKey.E, false, false, false);			
 #else
 			Console.Write("Specify input file: ");
 			srcPath = Console.ReadLine();

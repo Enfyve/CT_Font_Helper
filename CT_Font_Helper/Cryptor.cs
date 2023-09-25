@@ -4,15 +4,15 @@ using System.IO;
 
 namespace CT_Font_Helper
 {
-    class Decryptor
+    public class Cryptor
     {
         private const ulong headerX = 0x75FA2995054D415F;
         private const uint headerH = 0x6010C7FD;
         private const uint headerL = 0x8339EBB7;
 
-        private List<uint> keyData;
+        public List<uint> keyData = null;
 
-        public Decryptor(string keyFilePath)
+        public Cryptor(string keyFilePath)
         {
             using (var keyFile = File.Open(keyFilePath, FileMode.Open))
             {
@@ -63,28 +63,40 @@ namespace CT_Font_Helper
         }
 
 
-        public uint[] Encrypt(ulong header, List<uint> fileData)
+        public uint[] Encrypt(List<uint> fileData)
         {
-            // Use the key used in string_2.bin as the footer because I'm lazy.
-            fileData.Add(headerH);
-            fileData.Add(headerL);
+            ulong header = headerX;
 
-            uint[] tmp;
-            
-            for (int i = fileData.Count-3; i > 0; i -= 2)
+            for (int j = 0; j < fileData.Count-1; j+= 2)
             {
-                tmp = Decrypt(header, fileData);
-                fileData[i] = tmp[i+2];
-                fileData[i-1] = tmp[i+1];
+                uint chunkH = fileData[j] ^ (uint)(header >> 32);
+                uint chunkL = fileData[j + 1] ^ (uint)(header & 0xFFFFFFFF);
+
+                uint tmp1 = 0;
+                uint tmp2 = chunkH;
+                uint tmp3 = chunkL;
+                for (int i = 0; i < 16; i++)
+                {
+                    tmp1 = tmp2 ^ keyData[i];
+                    tmp2 = (keyData[(int)(tmp1 >> 0x18) + 0x12] +
+                            keyData[(int)(tmp1 >> 0x10 & 0xff) + 0x112] ^
+                            keyData[(int)(tmp1 >> 8 & 0xff) + 0x212]) +
+                            keyData[(int)(tmp1 & 0xff) + 0x312] ^ tmp3;
+                    tmp3 = tmp1;
+                }
+
+                chunkH = keyData[0x11] ^ tmp1;
+                chunkL = keyData[0x10] ^ tmp2;
+
+                header = (ulong)chunkH << 32 | chunkL;
+
+                fileData[j] = chunkH;
+                fileData[j+1] = chunkL;
             }
-
-            // Encrypt "header"
-            tmp = Decrypt(header, fileData);
-            fileData.Insert(0, tmp[1]);
-            fileData.Insert(0, tmp[0]);
-
+        
             return fileData.ToArray();
         }
 
     }
 }
+
